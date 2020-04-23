@@ -20,21 +20,27 @@ services:
       - SERVICES=sns,sqs,apigateway
   db-zotero-minio:
     image: minio/minio
-    build:
-      context: ./minio
     environment:
       - MINIO_ACCESS_KEY=zotero
       - MINIO_SECRET_KEY=zoterodocker
     command: server /data
+    labels:
+      - "traefik.backend=zotero-s3"
+      - "traefik.docker.network=web"
+      - "traefik.frontend.rule=Host:zotero-s3.speckfamily.org"
+      - "traefik.enable=true"
+      - "traefik.port=9000"
+      - "traefik.frontend.headers.STSSeconds=315360000"
+      - "traefik.frontend.redirect.entryPoint=https"
+      - "traefik.frontend.redirect.permanent=false"
+    networks:
+      - web
+      - default
   app-zotero:
     image: app-zotero
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "8080:80"
-      - "8081:81"
-      - "8082:8082"
     volumes:
       - "../:/var/www/zotero:rw"
       - "./config/config.inc.php:/var/www/zotero/include/config/config.inc.php:ro"
@@ -56,11 +62,24 @@ services:
       - db-zotero-localstack:localstack
       - db-zotero-minio:minio
     restart: always
-  app-zotero-phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    ports:
-      - "8083:80"
-    environment:
-      - PMA_HOST=mysql
-    links:
-      - db-zotero-mysql:mysql
+    labels:
+      - "traefik.zotero.backend=zotero"
+      - "traefik.docker.network=web"
+      - "traefik.zotero.frontend.rule=Host:zotero.speckfamily.org"
+      - "traefik.enable=true"
+      - "traefik.zotero.port=80"
+      - "traefik.zotero.frontend.headers.STSSeconds=315360000"
+      - "traefik.zotero.frontend.redirect.entryPoint=https"
+      - "traefik.zotero.frontend.redirect.permanent=false"
+      - "traefik.zoterostream.backend=zoterostream"
+      - "traefik.zoterostream.frontend.rule=Host:zotero-stream.speckfamily.org"
+      - "traefik.zoterostream.port=81"
+      - "traefik.zoterostream.frontend.headers.STSSeconds=315360000"
+      - "traefik.zoterostream.frontend.redirect.entryPoint=https"
+      - "traefik.zoterostream.frontend.redirect.permanent=false"
+    networks:
+      - web
+      - default
+networks:
+  web:
+    external: true

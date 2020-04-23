@@ -11,10 +11,10 @@ class Z_CONFIG {
 	
 	public static $DEBUG_LOG = true;
 	
-	public static $BASE_URI = 'http://localhost:8080/';
-	public static $API_BASE_URI = 'http://localhost:8080/';
-	public static $WWW_BASE_URI = 'http://localhost:8080/';
-	public static $SYNC_DOMAIN = 'localhost';
+	public static $BASE_URI = 'https://zotero.speckfamily.org/';
+	public static $API_BASE_URI = 'https://zotero.speckfamily.org/';
+	public static $WWW_BASE_URI = 'https://zotero.speckfamily.org/';
+	public static $SYNC_DOMAIN = 'sync';
 	
 	public static $AUTH_SALT = 'dhAyudsHU176dsqhUY';
 	public static $API_SUPER_USERNAME = 'admin';
@@ -23,7 +23,7 @@ class Z_CONFIG {
 	public static $AWS_REGION = 'us-east-1';
 	public static $AWS_ACCESS_KEY = 'zotero'; // leave credentials empty to use IAM role
 	public static $AWS_SECRET_KEY = 'zoterodocker';
-        public static $S3_ENDPOINT = 'localhost:8082';
+    public static $S3_ENDPOINT = 'zotero-s3.speckfamily.org';
 	public static $S3_BUCKET = 'zotero';
 	public static $S3_BUCKET_CACHE = '';
 	public static $S3_BUCKET_FULLTEXT = 'zotero-fulltext';

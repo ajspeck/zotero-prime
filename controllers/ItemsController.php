@@ -797,7 +797,7 @@ class ItemsController extends ApiController {
 			if (!$url) {
 				$this->e404();
 			}
-			
+			Z_Core::debug("Zotero-File-Modification-Time: {$info['mtime']}");
 			// Provide some headers to let 5.0 client skip download
 			header("Zotero-File-Modification-Time: {$info['mtime']}");
 			header("Zotero-File-MD5: {$info['hash']}");
