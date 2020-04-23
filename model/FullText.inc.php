@@ -53,7 +53,6 @@ class Zotero_FullText {
 		$sql .= implode(", ", $fields) . ") VALUES ("
 			. implode(', ', array_fill(0, sizeOf($params), '?')) . ")";
 		Zotero_DB::query($sql, $params, Zotero_Shards::getByLibraryID($libraryID));
-		
 		// Add to S3
 		$json = [
 			'libraryID' => $libraryID,
@@ -62,7 +61,6 @@ class Zotero_FullText {
 			'content' => (string) $data->content,
 			'timestamp' => str_replace(" ", "T", $timestamp)
 		];
-		
 		foreach (self::$metadata as $prop) {
 			if (isset($data->$prop)) {
 				$json[$prop] = (int)$data->$prop;
@@ -71,7 +69,6 @@ class Zotero_FullText {
 		
 		$json = json_encode($json, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 		$json = gzencode($json);
-		
 		$s3Client = Z_Core::$AWS->createS3();
 		$start = microtime(true);
 		$s3Client->putObject([
@@ -79,7 +76,7 @@ class Zotero_FullText {
 			'Key' => $libraryID . "/" . $key,
 			'Body' => $json,
 			'ContentType' => 'application/gzip',
-			'StorageClass' => strlen($json) < self::$minFileSizeStandardIA ? 'STANDARD' : 'STANDARD_IA'
+			'StorageClass' => 'STANDARD'
 		]);
 		StatsD::timing("s3.fulltext.put", (microtime(true) - $start) * 1000);
 		

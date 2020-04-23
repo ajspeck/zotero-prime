@@ -689,8 +689,9 @@ class Zotero_Storage {
 				. "Content-Disposition: form-data; name=\"$key\"\r\n\r\n"
 				. $val . "\r\n";
 		}
-		$prefix .= "--$boundary\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n";
-		
+		//$prefix .= "--$boundary\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n";
+		$prefix .= "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"binary\"\r\n\r\n";
+                
 		// Suffix
 		$suffix = "\r\n--$boundary--";
 		
