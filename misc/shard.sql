@@ -22,9 +22,6 @@
 --  ***** END LICENSE BLOCK *****
 
 
-SET SQL_MODE="NO_AUTO_VALUE_ON_ZERO";
-
-
 --
 -- IMPORTANT: All tables added here must be added to Zotero_Shards::moveLibrary()!
 --
@@ -71,7 +68,8 @@ CREATE TABLE `creators` (
   `serverDateModifiedMS` smallint(4) unsigned NOT NULL DEFAULT '0',
   PRIMARY KEY (`creatorID`),
   UNIQUE KEY `key` (`libraryID`,`key`),
-  KEY `hash` (`libraryID`,`creatorDataHash`(5))
+  KEY `hash` (`libraryID`,`creatorDataHash`(5)),
+  KEY `name` (`libraryID`,`lastName`(7),`firstName`(6))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 

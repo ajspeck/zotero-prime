@@ -24,6 +24,8 @@
     ***** END LICENSE BLOCK *****
 */
 
+declare(strict_types=1);
+
 class ApiController extends Controller {
 	protected $writeTokenCacheTime = 43200; // 12 hours
 	
@@ -63,6 +65,7 @@ class ApiController extends Controller {
 	protected $libraryVersion;
 	protected $libraryVersionOnFailure = false;
 	protected $headers = [];
+	protected $isLegacySchemaClient = false;
 	
 	private $startTime = false;
 	private $timeLogged = false;
@@ -70,6 +73,7 @@ class ApiController extends Controller {
 	
 	public function init($extra) {
 		$this->startTime = microtime(true);
+		$this->uri = Z_CONFIG::$API_BASE_URI . substr($_SERVER["REQUEST_URI"], 1);
 		
 		if (!Z_CONFIG::$API_ENABLED) {
 			$this->e503(Z_CONFIG::$MAINTENANCE_MESSAGE);
@@ -135,6 +139,16 @@ class ApiController extends Controller {
 		
 		if ($this->method == 'OPTIONS') {
 			$this->end();
+		}
+		
+		if ($_SERVER['HTTP_HOST'] == 'sync.zotero.org') {
+			if ($this->method == 'GET' || $this->method == 'POST') {
+				header("Content-Type: text/xml");
+				header("HTTP/1.1 400");
+				echo '<response><error code="UPGRADE_REQUIRED">Zotero 4 syncing is no longer supported. Please upgrade to Zotero 5 to continue syncing.</error></response>';
+				$this->end();
+			}
+			$this->e400("Invalid endpoint");
 		}
 		
 		if (in_array($this->method, array('POST', 'PUT', 'PATCH'))) {
@@ -279,7 +293,7 @@ class ApiController extends Controller {
 				// Explicit auth request or not a GET request
 				//
 				// /users/<id>/keys is an exception, since the key is embedded in the URL
-				if ($this->method != "GET" && $this->action != 'keys') {
+				if ($this->method != "GET" && $this->action != 'keys' && empty($extra['noauth'])) {
 					$this->e403('An API key is required for write requests.');
 				}
 				
@@ -291,8 +305,6 @@ class ApiController extends Controller {
 		
 		// Request limiter needs initialized authentication parameters
 		$this->initRequestLimiter();
-		
-		$this->uri = Z_CONFIG::$API_BASE_URI . substr($_SERVER["REQUEST_URI"], 1);
 		
 		// Get object user
 		if (isset($this->objectUserID)) {
@@ -354,6 +366,14 @@ class ApiController extends Controller {
 			$apiVersion = 1;
 		}
 		
+		$this->isLegacySchemaClient = false;
+		if (strpos($_SERVER['HTTP_X_ZOTERO_VERSION'] ?? '', '5.0') === 0) {
+			require_once '../model/ToolkitVersionComparator.inc.php';
+			$this->isLegacySchemaClient = ToolkitVersionComparator::compare(
+				$_SERVER['HTTP_X_ZOTERO_VERSION'], "5.0.78"
+			) < 0;
+		}
+		
 		if (!empty($extra['publications'])) {
 			// Query parameters not yet parsed, so check version parameter
 			if (($apiVersion && $apiVersion < 3)
@@ -404,25 +424,6 @@ class ApiController extends Controller {
 			}
 		}
 		
-		// Return 409 if target library is locked
-		switch ($this->method) {
-			case 'POST':
-			case 'PUT':
-			case 'DELETE':
-				switch ($this->action) {
-					// Library lock doesn't matter for some admin requests
-					case 'keys':
-					case 'storageadmin':
-						break;
-					
-					default:
-						if ($this->objectLibraryID && Zotero_Libraries::isLocked($this->objectLibraryID)) {
-							$this->e409("Target library is locked");
-						}
-						break;
-				}
-		}
-		
 		$this->scopeObject = !empty($extra['scopeObject']) ? $extra['scopeObject'] : $this->scopeObject;
 		$this->subset = !empty($extra['subset']) ? $extra['subset'] : $this->subset;
 		
@@ -430,6 +431,7 @@ class ApiController extends Controller {
 							? (!empty($_GET['info']) ? 'info' : 'download')
 							: false;
 		$this->fileView = !empty($extra['view']);
+		$this->fileViewURL = !empty($extra['viewurl']);
 		
 		$this->singleObject = $this->objectKey && !$this->subset;
 		
@@ -465,6 +467,8 @@ class ApiController extends Controller {
 		
 		header("Zotero-API-Version: " . $version);
 		StatsD::increment("api.request.version.v" . $version, 0.25);
+		
+		header("Zotero-Schema-Version: " . self::getSchemaVersion());
 	}
 	
 	
@@ -476,6 +480,20 @@ class ApiController extends Controller {
 	public function noop() {
 		echo "Nothing to see here.";
 		exit;
+	}
+	
+	
+	public function getSchemaVersion() {
+		$cacheKey = "schemaVersion";
+		$version = Z_Core::$MC->get($cacheKey);
+		if ($version) {
+			return $version;
+		}
+		$version = json_decode(
+			file_get_contents(Z_ENV_BASE_PATH . 'htdocs/zotero-schema/schema.json')
+		)->version;
+		Z_Core::$MC->set($cacheKey, $version, 60);
+		return $version;
 	}
 	
 	
@@ -1019,6 +1037,31 @@ class ApiController extends Controller {
 	}
 	
 	
+	protected function checkObjectsForLegacySchema($objectType, $jsonObjects) {
+		if (!$this->isLegacySchemaClient) return;
+		
+		foreach ($jsonObjects as $jsonObject) {
+			if (!\Zotero\DataObjectUtilities::isLegacySchema($objectType, $jsonObject['data'])) {
+				// TEMP: Disabled on production during testing
+				if (Z_ENV_TESTING_SITE) {
+					$this->outdatedClientError($this->objectLibraryID);
+				}
+			}
+		}
+	}
+	
+	
+	protected function outdatedClientError(int $libraryID) {
+		if (!Z_ENV_TESTING_SITE) return;
+		
+		$type = Zotero_Libraries::getType($libraryID);
+		$libraryName = $type == 'user' ? 'My Library' : Zotero_Libraries::getName($libraryID);
+		$msg = "Some data in “{$libraryName}” was created in a newer version of Zotero and could not "
+			. "be downloaded. Upgrade Zotero to continue syncing this library.";
+		$this->e400($msg);
+	}
+	
+	
 	/**
 	 * Handler for HTTP shortcut functions (e404(), e500())
 	 */
@@ -1039,7 +1082,7 @@ class ApiController extends Controller {
 			Zotero_DB::rollback(true);
 		}
 		
-		if (isset($arguments[0])) {
+		if (!empty($arguments[0])) {
 			echo htmlspecialchars($arguments[0]);
 		}
 		else {

@@ -25,7 +25,7 @@
 */
 require_once 'include/bootstrap.inc.php';
 
-class DateTests extends PHPUnit_Framework_TestCase {
+class DateTests extends \PHPUnit\Framework\TestCase {
 	public function test_strToDate() {
 		$patterns = array(
 			"February 28, 2011",
@@ -81,6 +81,13 @@ class DateTests extends PHPUnit_Framework_TestCase {
 		$this->assertFalse(isset($parts['month']));
 		$this->assertFalse(isset($parts['day']));
 		$this->assertEquals("1984", $parts['part']);
+	}
+	
+	
+	public function test_sqlToISO8601() {
+		$sqlDate = "2019-05-23 01:23:45";
+		$isoDate = Zotero_Date::sqlToISO8601($sqlDate);
+		$this->assertEquals("2019-05-23T01:23:45Z", $isoDate);
 	}
 	
 	

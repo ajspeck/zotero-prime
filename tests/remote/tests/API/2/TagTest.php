@@ -30,25 +30,25 @@ require_once 'APITests.inc.php';
 require_once 'include/api2.inc.php';
 
 class TagTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		require 'include/config.inc.php';
 		API::userClear($config['userID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		require 'include/config.inc.php';
 		API::userClear($config['userID']);
 	}
 	
 	
-	public function setUp() {
+	public function setUp(): void {
 		parent::setUp();
 		API::useAPIVersion(2);
 	}
 	
-	public function testEmptyTag() {
+	public function test_empty_tag_should_be_ignored() {
 		$json = API::getItemTemplate("book");
 		$json->tags[] = array(
 			"tag" => "",
@@ -56,7 +56,7 @@ class TagTests extends APITests {
 		);
 		
 		$response = API::postItem($json);
-		$this->assert400ForObject($response, "Tag cannot be empty");
+		$this->assert200($response);
 	}
 	
 	

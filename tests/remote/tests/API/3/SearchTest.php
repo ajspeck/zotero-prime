@@ -30,12 +30,12 @@ require_once 'APITests.inc.php';
 require_once 'include/api3.inc.php';
 
 class SearchTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
 	}
@@ -84,7 +84,7 @@ class SearchTests extends APITests {
 		$this->assertEquals($libraryVersion, $data['version']);
 		$this->assertEquals($libraryVersion, $data['version']);
 		$this->assertEquals($name, $data['name']);
-		$this->assertInternalType('array', $data['conditions']);
+		$this->assertIsArray($data['conditions']);
 		$this->assertCount(sizeOf($conditions), $data['conditions']);
 		foreach ($conditions as $i => $condition) {
 			foreach ($condition as $key => $val) {
@@ -102,7 +102,7 @@ class SearchTests extends APITests {
 		$json = API::getJSONFromResponse($response);
 		$data = $json[0]['data'];
 		$this->assertEquals($name, $data['name']);
-		$this->assertInternalType('array', $data['conditions']);
+		$this->assertIsArray($data['conditions']);
 		$this->assertCount(sizeOf($conditions), $data['conditions']);
 		foreach ($conditions as $i => $condition) {
 			foreach ($condition as $key => $val) {
@@ -140,7 +140,7 @@ class SearchTests extends APITests {
 		
 		$data = API::getSearch($key, $this, 'json')['data'];
 		$this->assertEquals($name, (string) $data['name']);
-		$this->assertInternalType('array', $data['conditions']);
+		$this->assertIsArray($data['conditions']);
 		$this->assertCount(sizeOf($conditions), $data['conditions']);
 		foreach ($conditions as $i => $condition) {
 			foreach ($condition as $key => $val) {

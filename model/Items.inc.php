@@ -61,12 +61,14 @@ class Zotero_Items {
 	}
 	
 	
-	public static function search($libraryID, $onlyTopLevel=false, $params=array(), $includeTrashed=false, Zotero_Permissions $permissions=null) {
+	public static function search($libraryID, $onlyTopLevel = false, array $params = [], Zotero_Permissions $permissions = null) {
 		$rnd = "_" . uniqid($libraryID . "_");
 		
 		$results = array('results' => array(), 'total' => 0);
 		
 		$shardID = Zotero_Shards::getByLibraryID($libraryID);
+		
+		$includeTrashed = $params['includeTrashed'];
 		
 		$isPublications = !empty($params['publications']);
 		if ($isPublications && Zotero_Libraries::getType($libraryID) == 'publications') {
@@ -588,7 +590,9 @@ class Zotero_Items {
 		
 		$results['total'] = Zotero_DB::valueQuery("SELECT FOUND_ROWS()", false, $shardID);
 		if ($rows) {
-			if ($params['format'] == 'keys') {
+			if ($params['format'] == 'keys'
+					// Used internally
+					|| $params['format'] == 'ids') {
 				$results['results'] = $rows;
 			}
 			else if ($params['format'] == 'versions') {
@@ -697,25 +701,6 @@ class Zotero_Items {
 			
 			Zotero_Notifier::trigger('modify', 'item', $libraryKeys);
 		}
-	}
-	
-	
-	public static function getDataValuesFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$fields = $xpath->evaluate('//items/item/field');
-		$vals = array();
-		foreach ($fields as $f) {
-			$vals[] = $f->firstChild->nodeValue;
-		}
-		$vals = array_unique($vals);
-		return $vals;
-	}
-	
-	
-	public static function getLongDataValueFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$fields = $xpath->evaluate('//items/item/field[string-length(text()) > ' . self::$maxDataValueLength . ']');
-		return $fields->length ? $fields->item(0) : false;
 	}
 	
 	
@@ -871,211 +856,6 @@ class Zotero_Items {
 		$itemObj->relatedItems = $relatedKeys;
 		
 		return $itemObj;
-	}
-	
-	
-	/**
-	 * Converts a Zotero_Item object to a SimpleXMLElement item
-	 *
-	 * @param	object				$item		Zotero_Item object
-	 * @param	array				$data
-	 * @return	SimpleXMLElement					Item data as SimpleXML element
-	 */
-	public static function convertItemToXML(Zotero_Item $item, $data=array()) {
-		$t = microtime(true);
-		
-		// Check cache for all items except imported attachments,
-		// which don't have their versions updated when the client
-		// updates their file metadata
-		if (!$item->isImportedAttachment()) {
-			$cacheVersion = 1;
-			$cacheKey = "syncXMLItem_" . $item->libraryID . "/" . $item->id . "_"
-				. $item->version
-				. "_" . md5(json_encode($data))
-				// For code-based changes
-				. "_" . $cacheVersion
-				// For data-based changes
-				. (isset(Z_CONFIG::$CACHE_VERSION_SYNC_XML_ITEM)
-					? "_" . Z_CONFIG::$CACHE_VERSION_SYNC_XML_ITEM
-					: "");
-			$xmlstr = Z_Core::$MC->get($cacheKey);
-		}
-		else {
-			$cacheKey = false;
-			$xmlstr = false;
-		}
-		if ($xmlstr) {
-			$xml = new SimpleXMLElement($xmlstr);
-			
-			StatsD::timing("api.items.itemToSyncXML.cached", (microtime(true) - $t) * 1000);
-			StatsD::increment("memcached.items.itemToSyncXML.hit");
-			
-			// Skip the cache every 10 times for now, to ensure cache sanity
-			if (Z_Core::probability(10)) {
-				//$xmlstr = $xml->saveXML();
-			}
-			else {
-				Z_Core::debug("Using cached sync XML item");
-				return $xml;
-			}
-		}
-		
-		$xml = new SimpleXMLElement('<item/>');
-		
-		// Primary fields
-		foreach (self::$primaryFields as $field) {
-			switch ($field) {
-				case 'id':
-				case 'serverDateModified':
-				case 'version':
-					continue (2);
-				
-				case 'itemTypeID':
-					$xmlField = 'itemType';
-					$xmlValue = Zotero_ItemTypes::getName($item->$field);
-					break;
-				
-				default:
-					$xmlField = $field;
-					$xmlValue = $item->$field;
-			}
-			
-			$xml[$xmlField] = $xmlValue;
-		}
-		
-		// Item data
-		$itemTypeID = $item->itemTypeID;
-		$fieldIDs = $item->getUsedFields();
-		foreach ($fieldIDs as $fieldID) {
-			$val = $item->getField($fieldID);
-			if ($val == '') {
-				continue;
-			}
-			$f = $xml->addChild('field', htmlspecialchars($val));
-			$fieldName = Zotero_ItemFields::getName($fieldID);
-			// Special handling for renamed computerProgram 'version' field
-			if ($itemTypeID == 32 && $fieldName == 'versionNumber') {
-				$fieldName = 'version';
-			}
-			$f['name'] = htmlspecialchars($fieldName);
-		}
-		
-		// Deleted item flag
-		if ($item->deleted) {
-			$xml['deleted'] = '1';
-		}
-		
-		if ($item->isNote() || $item->isAttachment()) {
-			$sourceItemID = $item->getSource();
-			if ($sourceItemID) {
-				$sourceItem = Zotero_Items::get($item->libraryID, $sourceItemID);
-				if (!$sourceItem) {
-					throw new Exception("Parent item $sourceItemID not found");
-				}
-				$xml['sourceItem'] = $sourceItem->key;
-			}
-		}
-		
-		// Group modification info
-		$createdByUserID = null;
-		$lastModifiedByUserID = null;
-		switch (Zotero_Libraries::getType($item->libraryID)) {
-			case 'group':
-				$createdByUserID = $item->createdByUserID;
-				$lastModifiedByUserID = $item->lastModifiedByUserID;
-				break;
-		}
-		if ($createdByUserID) {
-			$xml['createdByUserID'] = $createdByUserID;
-		}
-		if ($lastModifiedByUserID) {
-			$xml['lastModifiedByUserID'] = $lastModifiedByUserID;
-		}
-		
-		if ($item->isAttachment()) {
-			$linkMode = $item->attachmentLinkMode;
-			$xml['linkMode'] = Zotero_Attachments::linkModeNameToNumber($linkMode);
-			$xml['mimeType'] = $item->attachmentMIMEType;
-			if ($item->attachmentCharset) {
-				$xml['charset'] = $item->attachmentCharset;
-			}
-			
-			$storageModTime = $item->attachmentStorageModTime;
-			if ($storageModTime) {
-				$xml['storageModTime'] = $storageModTime;
-			}
-			
-			$storageHash = $item->attachmentStorageHash;
-			if ($storageHash) {
-				$xml['storageHash'] = $storageHash;
-			}
-			
-			if ($linkMode != 'linked_url') {
-				$xml->addChild('path', htmlspecialchars($item->attachmentPath));
-			}
-		}
-		
-		// Note
-		if ($item->isNote() || $item->isAttachment()) {
-			// Get htmlspecialchars'ed note
-			$note = $item->getNote(false, true);
-			if ($note !== '') {
-				$xml->addChild('note', $note);
-			}
-			else if ($item->isNote()) {
-				$xml->addChild('note', '');
-			}
-		}
-		
-		// Creators
-		$creators = $item->getCreators();
-		if ($creators) {
-			foreach ($creators as $index => $creator) {
-				$c = $xml->addChild('creator');
-				$c['key'] = $creator['ref']->key;
-				$c['creatorType'] = htmlspecialchars(
-					Zotero_CreatorTypes::getName($creator['creatorTypeID'])
-				);
-				$c['index'] = $index;
-				if (empty($data['updatedCreators']) ||
-						!in_array($creator['ref']->id, $data['updatedCreators'])) {
-					$cNode = dom_import_simplexml($c);
-					$creatorXML = Zotero_Creators::convertCreatorToXML($creator['ref'], $cNode->ownerDocument);
-					$cNode->appendChild($creatorXML);
-				}
-			}
-		}
-		
-		// Related items
-		$relatedKeys = $item->relatedItems;
-		$keys = array();
-		foreach ($relatedKeys as $relatedKey) {
-			if (Zotero_Items::getByLibraryAndKey($item->libraryID, $relatedKey)) {
-				$keys[] = $relatedKey;
-			}
-		}
-		if ($keys) {
-			$xml->related = implode(' ', $keys);
-		}
-		
-		if ($xmlstr) {
-			$uncached = $xml->saveXML();
-			if ($xmlstr != $uncached) {
-				error_log("Cached sync XML item does not match");
-				error_log("  Cached: " . $xmlstr);
-				error_log("Uncached: " . $uncached);
-			}
-		}
-		else {
-			$xmlstr = $xml->saveXML();
-			if ($cacheKey) {
-				Z_Core::$MC->set($cacheKey, $xmlstr, 3600); // 1 hour for now
-			}
-			StatsD::timing("api.items.itemToSyncXML.uncached", (microtime(true) - $t) * 1000);
-			StatsD::increment("memcached.items.itemToSyncXML.miss");
-		}
-		
-		return $xml;
 	}
 	
 	
@@ -1613,14 +1393,32 @@ class Zotero_Items {
 	 * Initial request:
 	 *
 	 * {
-	 *   "url": "http://..."
+	 *   "url": "https://example.com"
+	 * }
+	 *
+	 * Response:
+	 *
+	 * {
+	 *   "url": "https://example.com",
+	 *   "token": "abcdefgh123456789",
+	 *   "items": {
+	 *     "0": {
+	 *       "title": "Item 1 Title"
+	 *     },
+	 *     "1": {
+	 *       "title": "Item 2 Title"
+	 *     },
+	 *     "2": {
+	 *       "title": "Item 3 Title"
+	 *     }
+	 *   }
 	 * }
 	 *
 	 * Item selection for multi-item results:
 	 *
 	 * {
-	 *   "url": "http://...",
-	 *   "token": "<token>"
+	 *   "url": "https://example.com",
+	 *   "token": "abcdefgh123456789"
 	 *   "items": {
 	 *     "0": "Item 1 Title",
 	 *     "3": "Item 2 Title"
@@ -1628,20 +1426,17 @@ class Zotero_Items {
 	 * }
 	 *
 	 * Returns an array of keys of added items (like updateMultipleFromJSON) or an object
-	 * with a 'select' property containing an array of titles for multi-item results
+	 * with 'token' and 'items' properties for multi-item results
 	 */
-	public static function addFromURL($json, $requestParams, $libraryID, $userID,
-			Zotero_Permissions $permissions, $translationToken) {
-		if (!$translationToken) {
-			throw new Exception("Translation token not provided");
-		}
-		
+	public static function addFromURL($json, $requestParams, $libraryID, $userID, Zotero_Permissions $permissions) {
 		self::validateJSONURL($json, $requestParams);
 		
-		$cacheKey = 'addFromURLKeyMappings_' . md5($json->url . $translationToken);
-		
 		// Replace numeric keys with URLs for selected items
-		if (isset($json->items) && $requestParams['v'] >= 2) {
+		if (isset($json->items)) {
+			if ($requestParams['v'] >= 3 && empty($json->token)) {
+				throw new Exception("Token not provided with selected items", Z_ERROR_INVALID_INPUT);
+			}
+			$cacheKey = 'addFromURLKeyMappings_' . md5($json->url . $json->token);
 			$keyMappings = Z_Core::$MC->get($cacheKey);
 			$newItems = [];
 			foreach ($json->items as $number => $title) {
@@ -1653,10 +1448,13 @@ class Zotero_Items {
 			}
 			$json->items = $newItems;
 		}
+		else if (isset($json->token)) {
+			throw new Exception("'token' is valid only for item selection requests", Z_ERROR_INVALID_INPUT);
+		}
 		
 		$response = Zotero_Translate::doWeb(
 			$json->url,
-			$translationToken,
+			isset($json->token) ? $json->token : null,
 			isset($json->items) ? $json->items : null
 		);
 		
@@ -1696,12 +1494,9 @@ class Zotero_Items {
 					
 					// TODO: link attachments, or not possible from translation-server?
 				}
-				
-				$response = $items;
 			}
-			// APIv2 (was this ever used? it's possible the bookmarklet used v1 and we never publicized
-			// this for v2)
-			else if ($requestParams['v'] == 2) {
+			// APIv2
+			else {
 				for ($i = 0, $len = sizeOf($items); $i < $len; $i++) {
 					// Assign key here so that we can add notes if necessary
 					do {
@@ -1717,7 +1512,7 @@ class Zotero_Items {
 								"itemType" => "note",
 								"note" => $note->note,
 								"parentItem" => $itemKey
-							];
+								];
 							$items[] = $newNote;
 						}
 						unset($items[$i]->notes);
@@ -1726,15 +1521,8 @@ class Zotero_Items {
 					// TODO: link attachments, or not possible from translation-server?
 				}
 			}
-			// APIv1
-			else {
-				for ($i = 0, $len = sizeOf($items); $i < $len; $i++) {
-					unset($items[$i]->key);
-					unset($items[$i]->version);
-					unset($items[$i]->itemKey);
-					unset($items[$i]->itemVersion);
-				}
-			}
+			
+			$response = $items;
 			
 			try {
 				self::validateMultiObjectJSON($response, $requestParams);
@@ -1747,20 +1535,23 @@ class Zotero_Items {
 		}
 		// Multi-item select
 		else if (isset($response->select)) {
+			$result = new stdClass;
+			$result->token = $response->token;
+			
 			// Replace URLs with numeric keys for found items
-			if ($requestParams['v'] >= 2) {
-				$keyMappings = [];
-				$newItems = new stdClass;
-				$number = 0;
-				foreach ($response->select as $url => $title) {
-					$keyMappings[$number] = $url;
-					$newItems->$number = $title;
-					$number++;
-				}
-				Z_Core::$MC->set($cacheKey, $keyMappings, 600);
-				$response->select = $newItems;
+			$keyMappings = [];
+			$newItems = new stdClass;
+			$number = 0;
+			foreach ($response->select as $url => $title) {
+				$keyMappings[$number] = $url;
+				$newItems->$number = $title;
+				$number++;
 			}
-			return $response;
+			$cacheKey = 'addFromURLKeyMappings_' . md5($json->url . $response->token);
+			Z_Core::$MC->set($cacheKey, $keyMappings, 600);
+			
+			$result->select = $newItems;
+			return $result;
 		}
 		else {
 			throw new Exception("Invalid return value from doWeb()");
@@ -2003,7 +1794,9 @@ class Zotero_Items {
 			$item->setSourceKey(false);
 		}
 		
-		$item->deleted = !empty($json->deleted);
+		if (isset($json->deleted) || !$partialUpdate) {
+			$item->deleted = !empty($json->deleted);
+		}
 		
 		if (isset($json->inPublications) || !$partialUpdate) {
 			$item->inPublications = !empty($json->inPublications);
@@ -2093,6 +1886,19 @@ class Zotero_Items {
 			if (($partialUpdate && isset($json->parentItem) && $json->parentItem === false)
 					// PUT
 					|| (!$partialUpdate && (!isset($json->parentItem) || $json->parentItem === false))) {
+				$isChild = false;
+			}
+			// Implicit parentItem: false for PATCH if collections provided
+			//
+			// This shouldn't really happen, but there's apparently a client bug where attachments
+			// going through PDF metadata retrieval are initially being uploaded as children of
+			// unrelated items and then getting uploaded again as standalone attachments in the same
+			// collection without setting `parentItem: false`. Since child items can't be in
+			// collections themselves, we can take a `collections` property as an implicit
+			// `parentItem: false`.
+			else if ($partialUpdate && !isset($json->parentItem) && !empty($json->collections)) {
+				error_log("WARNING: 'collections' property provided without 'parentItem: false' for child item $libraryID/$json->key");
+				$json->parentItem = false;
 				$isChild = false;
 			}
 		}
@@ -2487,12 +2293,12 @@ class Zotero_Items {
 							break;
 					}
 					
-					if (($key == 'mtime' || $key == 'md5') && $libraryType == 'group') {
-						if (($item && $item->$propName !== $val) || (!$item && $val !== null && $val !== "")) {
-							throw new Exception("Cannot change '$key' directly in group library", Z_ERROR_INVALID_INPUT);
+					if ($key == 'mtime' || $key == 'md5') {
+						if ($item && $item->$propName !== $val && is_null($val)) {
+							throw new Exception("Cannot change existing '$key' to null", Z_ERROR_INVALID_INPUT);
 						}
 					}
-					else if ($key == 'md5') {
+					if ($key == 'md5') {
 						if ($val && !preg_match("/^[a-f0-9]{32}$/", $val)) {
 							throw new Exception("'$val' is not a valid MD5 hash", Z_ERROR_INVALID_INPUT);
 						}
@@ -2521,7 +2327,7 @@ class Zotero_Items {
 							$val = Zotero_Date::iso8601ToSQL($val);
 						}
 						// Don't allow dateAdded to change
-						if ($val != $item->$key) {
+						if ($val != $item->$key && empty($json->relations->{Zotero_Relations::$deletedItemPredicate})) {
 							// If passed dateAdded is exactly one hour or one day off, assume it's from
 							// a DST bug we haven't yet tracked down
 							// (https://github.com/zotero/zotero/issues/1201) and ignore it
@@ -2584,7 +2390,7 @@ class Zotero_Items {
 				throw new Exception("Invalid property '$key'", Z_ERROR_INVALID_INPUT);
 			}
 			
-			if ($key == 'items' && sizeOf($val) > Zotero_API::$maxTranslateItems) {
+			if ($key == 'items' && sizeOf(get_object_vars($val)) > Zotero_API::$maxTranslateItems) {
 				throw new Exception("Cannot translate more than " . Zotero_API::$maxTranslateItems . " items at a time", Z_ERROR_UPLOAD_TOO_LARGE);
 			}
 		}

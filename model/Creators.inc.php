@@ -82,16 +82,16 @@ class Zotero_Creators extends Zotero_ClassicDataObjects {
 	
 	
 	public static function getCreatorsWithData($libraryID, $creator, $sortByItemCountDesc=false) {
-		$sql = "SELECT creatorID FROM creators ";
+		$sql = "SELECT creatorID, firstName, lastName FROM creators ";
 		if ($sortByItemCountDesc) {
 			$sql .= "LEFT JOIN itemCreators USING (creatorID) ";
 		}
-		$sql .= "WHERE libraryID=? AND firstName COLLATE utf8mb4_bin = ? "
-			. "AND lastName COLLATE utf8mb4_bin = ? AND fieldMode=?";
+		$sql .= "WHERE libraryID=? AND firstName = ? "
+			. "AND lastName = ? AND fieldMode=?";
 		if ($sortByItemCountDesc) {
 			$sql .= " GROUP BY creatorID ORDER BY IFNULL(COUNT(*), 0) DESC";
 		}
-		$ids = Zotero_DB::columnQuery(
+		$rows = Zotero_DB::query(
 			$sql,
 			array(
 				$libraryID,
@@ -101,103 +101,14 @@ class Zotero_Creators extends Zotero_ClassicDataObjects {
 			),
 			Zotero_Shards::getByLibraryID($libraryID)
 		);
-		return $ids;
-	}
-	
-	
-	public static function getDataValuesFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$nodes = $xpath->evaluate('//creators/creator');
-		$objs = array();
-		foreach ($nodes as $n) {
-			$objs[] = self::convertXMLToDataValues($n);
-		}
-		return $objs;
-	}
-	
-	
-	public static function getLongDataValueFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$names = $xpath->evaluate(
-			'//creators/creator[string-length(name) > ' . self::$maxLastNameLength . ']/name '
-			. '| //creators/creator[string-length(firstName) > ' . self::$maxFirstNameLength . ']/firstName '
-			. '| //creators/creator[string-length(lastName) > ' . self::$maxLastNameLength . ']/lastName '
-		);
-		return $names->length ? $names->item(0) : false;
-	}
-	
-	
-	/**
-	 * Converts a SimpleXMLElement item to a Zotero_Item object
-	 *
-	 * @param	DOMElement			$xml		Item data as DOMElement
-	 * @return	Zotero_Creator					Zotero creator object
-	 */
-	public static function convertXMLToCreator(DOMElement $xml) {
-		$libraryID = (int) $xml->getAttribute('libraryID');
-		$creatorObj = self::getByLibraryAndKey($libraryID, $xml->getAttribute('key'));
-		// Not an existing item, so create
-		if (!$creatorObj) {
-			$creatorObj = new Zotero_Creator;
-			$creatorObj->libraryID = $libraryID;
-			$creatorObj->key = $xml->getAttribute('key');
-		}
-		$creatorObj->dateAdded = $xml->getAttribute('dateAdded');
-		$creatorObj->dateModified = $xml->getAttribute('dateModified');
 		
-		$dataObj = self::convertXMLToDataValues($xml);
-		foreach ($dataObj as $key => $val) {
-			$creatorObj->$key = $val;
-		}
+		// Case-sensitive filter, since the DB columns use a case-insensitive collation and we want
+		// it to use an index
+		$rows = array_filter($rows, function ($row) use ($creator) {
+			return $row['lastName'] == $creator->lastName && $row['firstName'] == $creator->firstName;
+		});
 		
-		return $creatorObj;
-	}
-	
-	
-	/**
-	 * Converts a Zotero_Creator object to a DOMElement
-	 *
-	 * @param	object				$item		Zotero_Creator object
-	 * @return	DOMElement						Creator data as DOMElement element
-	 */
-	public static function convertCreatorToXML(Zotero_Creator $creator, DOMDocument $doc) {
-		$xmlCreator = $doc->createElement('creator');
-		
-		$xmlCreator->setAttributeNode(new DOMAttr('libraryID', $creator->libraryID));
-		$xmlCreator->setAttributeNode(new DOMAttr('key', $creator->key));
-		$xmlCreator->setAttributeNode(new DOMAttr('dateAdded', $creator->dateAdded));
-		$xmlCreator->setAttributeNode(new DOMAttr('dateModified', $creator->dateModified));
-		
-		if ($creator->fieldMode == 1) {
-			$lastName = htmlspecialchars($creator->lastName);
-			
-			if (Zotero_Utilities::unicodeTrim($lastName) === "") {
-				error_log("Empty name for creator " . $creator->libraryID . "/" . $creator->key);
-				$lastName = json_decode('"\uFFFD"');
-			}
-			
-			$xmlCreator->appendChild(new DOMElement('name', $lastName));
-			$xmlCreator->appendChild(new DOMElement('fieldMode', 1));
-		}
-		else {
-			$firstName = htmlspecialchars($creator->firstName);
-			$lastName = htmlspecialchars($creator->lastName);
-			
-			if (Zotero_Utilities::unicodeTrim($firstName) === "" && Zotero_Utilities::unicodeTrim($lastName) === "") {
-				error_log("Empty first or last name for creator " . $creator->libraryID . "/" . $creator->key);
-				$firstName = json_decode('"\uFFFD"');
-				$lastName = json_decode('"\uFFFD"');
-			}
-			
-			$xmlCreator->appendChild(new DOMElement('firstName', $firstName));
-			$xmlCreator->appendChild(new DOMElement('lastName', $lastName));
-		}
-		
-		if ($creator->birthYear) {
-			$xmlCreator->appendChild(new DOMElement('birthYear', $creator->birthYear));
-		}
-		
-		return $xmlCreator;
+		return array_column($rows, 'creatorID');
 	}
 	
 	

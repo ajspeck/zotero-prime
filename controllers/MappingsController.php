@@ -31,11 +31,9 @@ class MappingsController extends ApiController {
 	 * JSON type/field data
 	 */
 	public function mappings() {
-		if (!empty($_GET['locale']) && $_GET['locale'] != 'en-US') {
-			$this->e400("Non-English locales are not yet supported");
-		}
-		
-		$locale = empty($_GET['locale']) ? 'en-US' : $_GET['locale'];
+		$locale = !empty($_GET['locale'])
+			? \Zotero\Schema::resolveLocale($_GET['locale'])
+			: 'en-US';
 		
 		if ($this->subset == 'itemTypeFields') {
 			if (empty($_GET['itemType'])) {
@@ -75,7 +73,7 @@ class MappingsController extends ApiController {
 		if (isset($itemTypeID)) {
 			$cacheKey .= "_" . $itemTypeID;
 		}
-		$cacheKey .= '_' . $this->apiVersion;
+		$cacheKey .= '_' . $this->apiVersion . '_' . $locale;
 		$ttl = 60;
 		$json = Z_Core::$MC->get($cacheKey);
 		if ($json) {
@@ -98,9 +96,7 @@ class MappingsController extends ApiController {
 					$rows[] = array(
 						'id' => $fieldID,
 						'name' => $fieldName,
-						'localized' => Zotero_ItemFields::getLocalizedString(
-							$itemTypeID, $fieldName, $locale
-						)
+						'localized' => Zotero_ItemFields::getLocalizedString($fieldName, $locale)
 					);
 				}
 				$propName = 'field';

@@ -1,12 +1,14 @@
 {
 	"name": "zotero/dataserver",
-	"description": "Zotero Sync and API Server",
+	"description": "Zotero Data Server",
 	"license": "AGPL-3.0",
 	"require": {
 		"aws/aws-sdk-php": "^3.2",
-		"doctrine/cache": "1.*"
+		"doctrine/cache": "1.*",
+		"elasticsearch/elasticsearch": "~6.0",
+		"php-ds/php-ds": "^1.2"
 	},
 	"require-dev": {
-		"phpunit/phpunit": "^4.8"
+		"phpunit/phpunit": "^8"
 	}
 }

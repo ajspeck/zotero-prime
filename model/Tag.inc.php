@@ -393,7 +393,7 @@ class Zotero_Tag {
 			return $this->linkedItems;
 		}
 		
-		return array_map(function ($key) use ($libraryID) {
+		return array_map(function ($key) {
 			return Zotero_Items::getByLibraryAndKey($this->libraryID, $key);
 		}, $this->linkedItems);
 	}
@@ -456,44 +456,6 @@ class Zotero_Tag {
 		);
 		
 		return $obj;
-	}
-	
-	
-	/**
-	 * Converts a Zotero_Tag object to a SimpleXMLElement item
-	 *
-	 * @param	object				$item		Zotero_Tag object
-	 * @return	SimpleXMLElement				Tag data as SimpleXML element
-	 */
-	public function toXML($syncMode=false) {
-		if (!$this->loaded) {
-			$this->load();
-		}
-		
-		$xml = new SimpleXMLElement('<tag/>');
-		
-		$xml['libraryID'] = $this->libraryID;
-		$xml['key'] = $this->key;
-		$name = $this->name;
-		if (trim($name) === "") {
-			error_log("Empty tag " . $this->libraryID . "/" . $this->key);
-			$name = json_decode('"\uFFFD"');
-		}
-		$xml['name'] = $name;
-		$xml['dateAdded'] = $this->dateAdded;
-		$xml['dateModified'] = $this->dateModified;
-		if ($this->type) {
-			$xml['type'] = $this->type;
-		}
-		
-		if ($syncMode) {
-			$itemKeys = $this->getLinkedItems(true);
-			if ($itemKeys) {
-				$xml->items = implode(" ", $itemKeys);
-			}
-		}
-		
-		return $xml;
 	}
 	
 	

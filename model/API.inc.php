@@ -75,11 +75,12 @@ class Zotero_API {
 		'style' => "chicago-note-bibliography",
 		'css' => "inline",
 		'linkwrap' => 0,
+		'locale' => "en-US",
 		
 		// search
 		'fq' => '',
 		'q' => '',
-		'qmode' => 'titleCreatorYear',
+		'qmode' => '',
 		'includeTrashed' => 0,
 		'itemType' => '',
 		'itemKey' => [],
@@ -87,8 +88,13 @@ class Zotero_API {
 		'searchKey' => [],
 		'tag' => '',
 		'tagType' => '',
-		'since' => null,
-		'sincetime' => null,
+		'since' => false,
+		'sincetime' => false,
+		
+		// Tags within items
+		'itemQ' => '',
+		'itemQMode' => '',
+		'itemTag' => [],
 		
 		'sort' => [
 			'v' => [
@@ -200,18 +206,12 @@ class Zotero_API {
 			unset($queryParams['order']);
 		}
 		
-		// Handle deprecated (in v3) 'newer' and 'newertime' parameters
+		// Handle deprecated (in v3) 'newer' parameter
 		if (isset($queryParams['newer'])) {
 			if (!isset($queryParams['since'])) {
 				$queryParams['since'] = $queryParams['newer'];
 			}
 			unset($queryParams['newer']);
-		}
-		if (isset($queryParams['newertime'])) {
-			if (!isset($queryParams['sincetime'])) {
-				$queryParams['sincetime'] = $queryParams['newertime'];
-			}
-			unset($queryParams['newertime']);
 		}
 		
 		foreach (self::resolveDefaultParams($action, self::$defaultParams, $queryParams) as $key => $value) {
@@ -390,6 +390,7 @@ class Zotero_API {
 					case 'libraryCatalog':
 					case 'callNumber':
 					case 'rights':
+					case 'extra':
 					case 'dateAdded':
 					case 'dateModified':
 					//case 'numChildren':
@@ -455,9 +456,16 @@ class Zotero_API {
 				break;
 			
 			case 'qmode':
-				if (!in_array($value, array('titleCreatorYear', 'everything'))) {
+				if ($action == 'tags') {
+					$validModes = ['contains', 'startswith'];
+				}
+				else if ($action == 'items') {
+					$validModes = ['titlecreatoryear', 'everything'];
+				}
+				if (!in_array(strtolower($value), $validModes)) {
 					throw new Exception("Invalid '$key' value '$value'", Z_ERROR_INVALID_INPUT);
 				}
+				$value = strtolower($value);
 				break;
 			
 			case 'collectionKey':
@@ -1006,6 +1014,9 @@ class Zotero_API {
 	}
 	
 	
+	/**
+	 * @param {Boolean} $options['asObject'] - Return response object instead of echoing
+	 */
 	public static function multiResponse($options, $overrideFormat=false) {
 		$format = $overrideFormat ? $overrideFormat : $options['requestParams']['format'];
 		$isExportFormat = in_array($format, Zotero_Translate::$exportFormats);
@@ -1064,7 +1075,11 @@ class Zotero_API {
 				break;
 			
 			case 'json':
-				echo Zotero_API::createJSONResponse($options['results'], $options['requestParams'], $options['permissions']);
+				$json = Zotero_API::createJSONResponse($options['results'], $options['requestParams'], $options['permissions']);
+				if ($options['asObject'] ?? false) {
+					return $json;
+				}
+				echo Zotero_Utilities::formatJSON($json);
 				break;
 			
 			case 'keys':
@@ -1105,7 +1120,7 @@ class Zotero_API {
 		foreach ($entries as $entry) {
 			$json[] = $entry->toResponseJSON($queryParams, $permissions);
 		}
-		return Zotero_Utilities::formatJSON($json);
+		return $json;
 	}
 	
 	

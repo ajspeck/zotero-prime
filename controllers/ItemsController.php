@@ -246,6 +246,7 @@ class ItemsController extends ApiController {
 				
 				case 'json':
 					$json = $item->toResponseJSON($this->queryParams, $this->permissions);
+					$this->checkObjectsForLegacySchema('item', [$json]);
 					echo Zotero_Utilities::formatJSON($json);
 					break;
 				
@@ -286,8 +287,6 @@ class ItemsController extends ApiController {
 			else {
 				$this->libraryVersion = Zotero_Libraries::getUpdatedVersion($this->objectLibraryID);
 			}
-			
-			$includeTrashed = $this->queryParams['includeTrashed'];
 			
 			if ($this->scopeObject) {
 				$this->allowMethods(array('GET', 'POST'));
@@ -397,7 +396,6 @@ class ItemsController extends ApiController {
 						$this->objectLibraryID,
 						true,
 						$this->queryParams,
-						$includeTrashed,
 						$this->permissions
 					);
 				}
@@ -406,13 +404,12 @@ class ItemsController extends ApiController {
 					$this->allowMethods(array('GET'));
 					
 					$title = "Deleted Items";
+					$this->queryParams['includeTrashed'] = true;
 					$this->queryParams['trashedItemsOnly'] = true;
-					$includeTrashed = true;
 					$results = Zotero_Items::search(
 						$this->objectLibraryID,
 						false,
 						$this->queryParams,
-						$includeTrashed,
 						$this->permissions
 					);
 				}
@@ -482,7 +479,6 @@ class ItemsController extends ApiController {
 							$this->objectLibraryID,
 							false,
 							$this->queryParams,
-							$includeTrashed,
 							$this->permissions
 						);
 					}
@@ -504,38 +500,27 @@ class ItemsController extends ApiController {
 						
 						// Server-side translation
 						if (isset($obj->url)) {
-							if ($this->apiVersion == 1) {
-								Zotero_DB::beginTransaction();
+							if ($this->apiVersion < 2) {
+								$this->e501("URL translation requires APIv2 or later");
 							}
-							
-							$token = $this->getTranslationToken($obj);
 							
 							$results = Zotero_Items::addFromURL(
 								$obj,
 								$this->queryParams,
 								$this->objectLibraryID,
 								$this->userID,
-								$this->permissions,
-								$token
+								$this->permissions
 							);
 							
-							if ($this->apiVersion == 1) {
-								Zotero_DB::commit();
-							}
 							// Multiple choices
 							if ($results instanceof stdClass) {
 								$this->queryParams['format'] = null;
 								header("Content-Type: application/json");
-								if ($this->queryParams['v'] >= 2) {
-									echo Zotero_Utilities::formatJSON([
-										'url' => $obj->url,
-										'token' => $token,
-										'items' => $results->select
-									]);
-								}
-								else {
-									echo Zotero_Utilities::formatJSON($results->select);
-								}
+								echo Zotero_Utilities::formatJSON([
+									'url' => $obj->url,
+									'token' => $results->token,
+									'items' => $results->select
+								]);
 								$this->e300();
 							}
 							// Error from translation server
@@ -549,33 +534,8 @@ class ItemsController extends ApiController {
 										$this->e500("Error translating URL");
 								}
 							}
-							// In v1, return data for saved items
-							else if ($this->apiVersion == 1) {
-								$uri = Zotero_API::getItemsURI($this->objectLibraryID);
-								$keys = array_merge(
-									get_object_vars($results['success']),
-									get_object_vars($results['unchanged'])
-								);
-								$queryString = "itemKey="
-									. urlencode(implode(",", $keys))
-									. "&format=atom&content=json&order=itemKeyList&sort=asc";
-								if ($this->apiKey) {
-									$queryString .= "&key=" . $this->apiKey;
-								}
-								$uri .= "?" . $queryString;
-								$this->queryParams = Zotero_API::parseQueryParams($queryString, $this->action, false);
-								$this->responseCode = 201;
-								
-								$title = "Items";
-								$results = Zotero_Items::search(
-									$this->objectLibraryID,
-									false,
-									$this->queryParams,
-									$includeTrashed,
-									$this->permissions
-								);
-							}
-							// Otherwise return write status report
+							
+							// Return write status report
 						}
 						// Uploaded items
 						else {
@@ -616,7 +576,6 @@ class ItemsController extends ApiController {
 									$this->objectLibraryID,
 									false,
 									$this->queryParams,
-									$includeTrashed,
 									$this->permissions
 								);
 							}
@@ -642,7 +601,6 @@ class ItemsController extends ApiController {
 							$this->objectLibraryID,
 							false,
 							$this->queryParams,
-							$includeTrashed,
 							$this->permissions
 						);
 					}
@@ -658,9 +616,8 @@ class ItemsController extends ApiController {
 				}
 				$results = Zotero_Items::search(
 					$this->objectLibraryID,
-					false,
+					$this->subset == 'top',
 					$this->queryParams,
-					$includeTrashed,
 					$this->permissions
 				);
 			}
@@ -716,7 +673,16 @@ class ItemsController extends ApiController {
 			case 'keys':
 			case 'versions':
 			case 'writereport':
-				Zotero_API::multiResponse($options);
+				if ($format == 'json') {
+					$options['asObject'] = true;
+				}
+				
+				$response = Zotero_API::multiResponse($options);
+				
+				if ($format == 'json') {
+					$this->checkObjectsForLegacySchema('item', $response);
+					echo Zotero_Utilities::formatJSON($response);
+				}
 				break;
 			
 			default:
@@ -782,10 +748,15 @@ class ItemsController extends ApiController {
 			}
 			
 			// File viewing
-			if ($this->fileView) {
-				$url = Zotero_Attachments::getTemporaryURL($item, !empty($_GET['int']));
+			if ($this->fileView || $this->fileViewURL) {
+				$url = Zotero_Attachments::getTemporaryURL($item);
 				if (!$url) {
 					$this->e500();
+				}
+				if ($this->fileViewURL) {
+					header('Content-Type: text/plain');
+					echo $url . "\n";
+					$this->end();
 				}
 				StatsD::increment("storage.view", 1);
 				$this->redirect($url);
@@ -945,17 +916,19 @@ class ItemsController extends ApiController {
 				// Reject file if it would put account over quota
 				if ($group) {
 					$quota = Zotero_Storage::getEffectiveUserQuota($group->ownerUserID);
-					$usage = Zotero_Storage::getUserUsage($group->ownerUserID);
+					$usage = Zotero_Storage::getUserUsage($group->ownerUserID, 'b');
 				}
 				else {
 					$quota = Zotero_Storage::getEffectiveUserQuota($this->objectUserID);
-					$usage = Zotero_Storage::getUserUsage($this->objectUserID);
+					$usage = Zotero_Storage::getUserUsage($this->objectUserID, 'b');
 				}
-				$total = $usage['total'];
-				$fileSizeMB = round($info->size / 1024 / 1024, 1);
-				if ($total + $fileSizeMB > $quota) {
+				$requestedMB = round(($usage['total'] + $info->size) / 1024 / 1024, 1);
+				if ($requestedMB > $quota) {
 					StatsD::increment("storage.upload.quota", 1);
-					$this->e413("File would exceed quota ($total + $fileSizeMB > $quota)");
+					$usageMB = round($usage['total'] / 1024 / 1024, 1);
+					header("Zotero-Storage-Usage: $usageMB");
+					header("Zotero-Storage-Quota: $quota");
+					$this->e413("File would exceed quota ($requestedMB > $quota)");
 				}
 				
 				Zotero_DB::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
@@ -968,11 +941,10 @@ class ItemsController extends ApiController {
 					
 					// Verify file size
 					if ($localInfo['size'] != $info->size) {
-						throw new Exception(
-							"Specified file size incorrect for existing file "
-								. $info->hash . "/" . $info->filename
-								. " ({$localInfo['size']} != {$info->size})"
-						);
+						error_log("Specified file size incorrect for existing file "
+							. $info->hash . "/" . $info->filename
+							. " ({$localInfo['size']} != {$info->size})");
+						$this->e400("Specified file size incorrect for known file");
 					}
 				}
 				// If not found, see if there's a copy with a different name
@@ -982,11 +954,12 @@ class ItemsController extends ApiController {
 						// Verify file size
 						$localInfo = Zotero_Storage::getFileInfoByID($oldStorageFileID);
 						if ($localInfo['size'] != $info->size) {
-							throw new Exception(
+							error_log(
 								"Specified file size incorrect for duplicated file "
 								. $info->hash . "/" . $info->filename
 								. " ({$localInfo['size']} != {$info->size})"
 							);
+							$this->e400("Specified file size incorrect for known file");
 						}
 						
 						// Create new file on S3 with new name
@@ -1196,33 +1169,5 @@ class ItemsController extends ApiController {
 			throw new Exception("Invalid request", Z_ERROR_INVALID_INPUT);
 		}
 		exit;
-	}
-	
-	
-	
-	/**
-	 * Get a token to pass to the translation server to retain state for multi-item saves
-	 */
-	protected function getTranslationToken($obj) {
-		$allowExplicitToken = $this->queryParams['v'] >= 2 || ($this->queryParams['v'] == 1 && Z_ENV_TESTING_SITE);
-		
-		if ($allowExplicitToken && isset($obj->token)) {
-			if (!isset($obj->items)) {
-				throw new Exception("'token' is valid only for item selection requests", Z_ERROR_INVALID_INPUT);
-			}
-			return $obj->token;
-		}
-		
-		// Bookmarklet uses cookie auth with v1
-		if ($this->queryParams['v'] == 1 && $this->cookieAuth) {
-			return md5($this->userID . $_GET['session']);
-		}
-		if (!$allowExplicitToken) {
-			return false;
-		}
-		if (isset($obj->items)) {
-			throw new Exception("Token not provided with selected items", Z_ERROR_INVALID_INPUT);
-		}
-		return md5($this->userID . $_SERVER['REMOTE_ADDR'] . uniqid());
 	}
 }

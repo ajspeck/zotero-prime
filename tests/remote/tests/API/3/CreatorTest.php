@@ -30,14 +30,42 @@ require_once 'APITests.inc.php';
 require_once 'include/api3.inc.php';
 
 class CreatorTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
+	}
+	
+	
+	public function test_should_add_creator_with_correct_case() {
+		// Create two items with lowercase
+		$data = [
+			"creators" => [
+				[
+					"creatorType" => "author",
+					"name" => "test"
+				]
+			]
+		];
+		API::createItem("book", $data);
+		API::createItem("book", $data);
+		
+		// Create capitalized
+		$json = API::createItem("book", [
+			"creators" => [
+				[
+					"creatorType" => "author",
+					"name" => "Test"
+				]
+			]
+		], $this, 'json');
+		$itemKey = $json['key'];
+		
+		$this->assertEquals("Test", $json['data']['creators'][0]['name']);
 	}
 	
 	

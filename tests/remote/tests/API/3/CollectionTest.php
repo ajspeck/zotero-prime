@@ -30,12 +30,12 @@ require_once 'APITests.inc.php';
 require_once 'include/api3.inc.php';
 
 class CollectionTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
 	}
@@ -461,6 +461,28 @@ class CollectionTests extends APITests {
 			]
 		);
 		$this->assert204($response);
+	}
+	
+	
+	public function test_should_move_parent_collection_to_root_if_descendent_of_collection() {
+		$jsonA = API::createCollection('A', false, $this, 'jsonData');
+		// Set B as a child of A
+		$keyB = API::createCollection('B', ['parentCollection' => $jsonA['key']], $this, 'key');
+		
+		// Try to set B as parent of A
+		$jsonA['parentCollection'] = $keyB;
+		$response = API::userPost(
+			self::$config['userID'],
+			"collections",
+			json_encode([$jsonA]),
+			["Content-Type: application/json"]
+		);
+		$this->assert200($response);
+		$json = API::getJSONFromResponse($response);
+		$this->assertEquals($keyB, $json['successful'][0]['data']['parentCollection']);
+		
+		$jsonB = API::getCollection($keyB, $this);
+		$this->assertFalse($jsonB['data']['parentCollection']);
 	}
 	
 	

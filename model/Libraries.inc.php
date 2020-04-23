@@ -26,6 +26,7 @@
 
 class Zotero_Libraries {
 	private static $libraryTypeCache = array();
+	private static $libraryJSONCache = [];
 	private static $originalVersions = array();
 	private static $updatedVersions = array();
 	
@@ -332,12 +333,8 @@ class Zotero_Libraries {
 	
 	
 	public static function isLocked($libraryID) {
-		$sql = "SELECT COUNT(*) FROM syncUploadQueueLocks WHERE libraryID=?";
-		if (Zotero_DB::valueQuery($sql, $libraryID)) {
-			return true;
-		}
-		$sql = "SELECT COUNT(*) FROM syncProcessLocks WHERE libraryID=?";
-		return !!Zotero_DB::valueQuery($sql, $libraryID);
+		// TODO
+		throw new Exception("Use last modified timestamp?");
 	}
 	
 	
@@ -379,7 +376,17 @@ class Zotero_Libraries {
 	
 	
 	public static function toJSON($libraryID) {
-		// TODO: cache
+		if (isset(self::$libraryJSONCache[$libraryID])) {
+			return self::$libraryJSONCache[$libraryID];
+		}
+		
+		$cacheVersion = 1;
+		$cacheKey = "libraryJSON_" . md5($libraryID . '_' . $cacheVersion);
+		$cached = Z_Core::$MC->get($cacheKey);
+		if ($cached) {
+			self::$libraryJSONCache[$libraryID] = $cached;
+			return $cached;
+		}
 		
 		$libraryType = Zotero_Libraries::getType($libraryID);
 		if ($libraryType == 'user') {
@@ -429,6 +436,9 @@ class Zotero_Libraries {
 			throw new Exception("Invalid library type '$libraryType'");
 		}
 		
+		self::$libraryJSONCache[$libraryID] = $json;
+		Z_Core::$MC->set($cacheKey, $json, 60);
+		
 		return $json;
 	}
 	
@@ -469,7 +479,10 @@ class Zotero_Libraries {
 				// deleting subcollections first, starting with the most recent, which isn't foolproof
 				// but will probably almost always do the trick.
 				if ($table == 'collections'
-						&& strpos($e->getMessage(), "Cannot delete or update a parent row") !== false) {
+						// Newer MySQL
+						&& (strpos($e->getMessage(), "Foreign key cascade delete/update exceeds max depth")
+						// Older MySQL
+						|| strpos($e->getMessage(), "Cannot delete or update a parent row") !== false)) {
 					$sql = "DELETE FROM collections WHERE libraryID=? "
 						. "ORDER BY parentCollectionID IS NULL, collectionID DESC";
 					Zotero_DB::query($sql, $libraryID, $shardID);

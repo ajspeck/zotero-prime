@@ -143,7 +143,16 @@ class Zotero_Tags extends Zotero_ClassicDataObjects {
 		// Pass a list of tagIDs, for when the initial search is done via SQL
 		$tagIDs = !empty($params['tagIDs']) ? $params['tagIDs'] : array();
 		// Filter for specific tags with "?tag=foo || bar"
-		$tagNames = !empty($params['tag']) ? explode(' || ', $params['tag']): array();
+		$tagNames = [];
+		if (!empty($params['tag'])) {
+			// tag=foo&tag=bar (AND) doesn't make sense in this context
+			if (is_array($params['tag'])) {
+				throw new Exception("Cannot specify 'tag' more than once", Z_ERROR_INVALID_INPUT);
+			}
+			$tagNames = explode(' || ', $params['tag']);
+		}
+		// Filter for tags associated with a set of items
+		$itemIDs = $params['itemIDs'] ?? [];
 		
 		if ($tagIDs) {
 			$sql .= "AND tagID IN ("
@@ -159,13 +168,25 @@ class Zotero_Tags extends Zotero_ClassicDataObjects {
 			$sqlParams = array_merge($sqlParams, $tagNames);
 		}
 		
+		if ($itemIDs) {
+			$sql .= "AND itemID IN ("
+					. implode(', ', array_fill(0, sizeOf($itemIDs), '?'))
+					. ") ";
+			$sqlParams = array_merge($sqlParams, $itemIDs);
+		}
+		
 		if (!empty($params['q'])) {
 			if (!is_array($params['q'])) {
 				$params['q'] = array($params['q']);
 			}
 			foreach ($params['q'] as $q) {
 				$sql .= "AND name LIKE ? ";
-				$sqlParams[] = "%$q%";
+				if ($params['qmode'] == 'startswith') {
+					$sqlParams[] = "$q%";
+				}
+				else {
+					$sqlParams[] = "%$q%";
+				}
 			}
 		}
 		
@@ -244,83 +265,4 @@ class Zotero_Tags extends Zotero_ClassicDataObjects {
 		
 		self::$tagsByID[$tag->id] = $tag;
 	}
-	
-	
-	/*public static function getDataValuesFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$attr = $xpath->evaluate('//tags/tag/@name');
-		$vals = array();
-		foreach ($attr as $a) {
-			$vals[] = $a->value;
-		}
-		$vals = array_unique($vals);
-		return $vals;
-	}*/
-	
-	
-	public static function getLongDataValueFromXML(DOMDocument $doc) {
-		$xpath = new DOMXPath($doc);
-		$attr = $xpath->evaluate('//tags/tag[string-length(@name) > ' . self::$maxLength . ']/@name');
-		return $attr->length ? $attr->item(0)->value : false;
-	}
-	
-	
-	/**
-	 * Converts a DOMElement item to a Zotero_Tag object
-	 *
-	 * @param	DOMElement			$xml		Tag data as DOMElement
-	 * @param	int					$libraryID	Library ID
-	 * @return	Zotero_Tag						Zotero tag object
-	 */
-	public static function convertXMLToTag(DOMElement $xml, &$itemKeysToUpdate) {
-		$libraryID = (int) $xml->getAttribute('libraryID');
-		$tag = self::getByLibraryAndKey($libraryID, $xml->getAttribute('key'));
-		if (!$tag) {
-			$tag = new Zotero_Tag;
-			$tag->libraryID = $libraryID;
-			$tag->key = $xml->getAttribute('key');
-		}
-		$tag->name = $xml->getAttribute('name');
-		$type = (int) $xml->getAttribute('type');
-		$tag->type = $type ? $type : 0;
-		$tag->dateAdded = $xml->getAttribute('dateAdded');
-		$tag->dateModified = $xml->getAttribute('dateModified');
-		
-		$dataChanged = $tag->hasChanged();
-		
-		$itemKeys = $xml->getElementsByTagName('items');
-		$oldKeys = $tag->getLinkedItems(true);
-		if ($itemKeys->length) {
-			$newKeys = explode(' ', $itemKeys->item(0)->nodeValue);
-		}
-		else {
-			$newKeys = array();
-		}
-		$addKeys = array_diff($newKeys, $oldKeys);
-		$removeKeys = array_diff($oldKeys, $newKeys);
-		
-		// If the data has changed, all old and new items need to change
-		if ($dataChanged) {
-			$itemKeysToUpdate = array_merge($oldKeys, $addKeys);
-		}
-		// Otherwise, only update items that are being added or removed
-		else {
-			$itemKeysToUpdate = array_merge($addKeys, $removeKeys);
-		}
-		
-		$tag->setLinkedItems($newKeys);
-		return $tag;
-	}
-	
-	
-	/**
-	 * Converts a Zotero_Tag object to a SimpleXMLElement item
-	 *
-	 * @param	object				$item		Zotero_Tag object
-	 * @return	SimpleXMLElement				Tag data as SimpleXML element
-	 */
-	public static function convertTagToXML(Zotero_Tag $tag, $syncMode=false) {
-		return $tag->toXML($syncMode);
-	}
 }
-?>

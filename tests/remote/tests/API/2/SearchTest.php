@@ -30,12 +30,12 @@ require_once 'APITests.inc.php';
 require_once 'include/api2.inc.php';
 
 class SearchTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
 	}
@@ -67,7 +67,7 @@ class SearchTests extends APITests {
 		$data = API::parseDataFromAtomEntry($xml);
 		$json = json_decode($data['content']);
 		$this->assertEquals($name, (string) $json->name);
-		$this->assertInternalType('array', $json->conditions);
+		$this->assertIsArray($json->conditions);
 		$this->assertCount(sizeOf($conditions), $json->conditions);
 		foreach ($conditions as $i => $condition) {
 			foreach ($condition as $key => $val) {
@@ -108,7 +108,7 @@ class SearchTests extends APITests {
 		$data = API::parseDataFromAtomEntry($xml);
 		$json = json_decode($data['content']);
 		$this->assertEquals($name, (string) $json->name);
-		$this->assertInternalType('array', $json->conditions);
+		$this->assertIsArray($json->conditions);
 		$this->assertCount(sizeOf($conditions), $json->conditions);
 		foreach ($conditions as $i => $condition) {
 			foreach ($condition as $key => $val) {

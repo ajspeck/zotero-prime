@@ -30,13 +30,13 @@ require_once 'APITests.inc.php';
 require_once 'include/api2.inc.php';
 
 class ItemTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 		API::groupClear(self::$config['ownedPrivateGroupID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
 		API::groupClear(self::$config['ownedPrivateGroupID']);
@@ -1150,13 +1150,11 @@ class ItemTests extends APITests {
 				. "&content=json&q=$childTitleSearch"
 		);
 		$this->assert200($response);
-		$this->assertNumResults(0, $response);
-		// Not currently possible
-		/*$this->assertNumResults(1, $response);
+		$this->assertNumResults(1, $response);
 		$xml = API::getXMLFromResponse($response);
 		$xpath = $xml->xpath('//atom:entry/zapi:key');
 		$this->assertCount(1, $xpath);
-		$this->assertContains($parentKeys[0], $xpath);*/
+		$this->assertContains($parentKeys[0], $xpath);
 		
 		// /top, Atom, with q for all items, ordered by title
 		$response = API::userGet(
@@ -1364,13 +1362,13 @@ class ItemTests extends APITests {
 			self::$config['userID'],
 			"items/$key?key=" . self::$config['apiKey'] . "&content=json"
 		);
-		$this->assertContains('"title": "Tést"', $response->getBody());
+		$this->assertStringContainsString('"title": "Tést"', $response->getBody());
 		
 		// Test feed
 		$response = API::userGet(
 			self::$config['userID'],
 			"items?key=" . self::$config['apiKey'] . "&content=json"
 		);
-		$this->assertContains('"title": "Tést"', $response->getBody());
+		$this->assertStringContainsString('"title": "Tést"', $response->getBody());
 	}
 }

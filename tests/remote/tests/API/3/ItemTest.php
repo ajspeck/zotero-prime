@@ -30,13 +30,13 @@ require_once 'APITests.inc.php';
 require_once 'include/api3.inc.php';
 
 class ItemTests extends APITests {
-	public static function setUpBeforeClass() {
+	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
 		API::userClear(self::$config['userID']);
 		API::groupClear(self::$config['ownedPrivateGroupID']);
 	}
 	
-	public static function tearDownAfterClass() {
+	public static function tearDownAfterClass(): void {
 		parent::tearDownAfterClass();
 		API::userClear(self::$config['userID']);
 		API::groupClear(self::$config['ownedPrivateGroupID']);
@@ -44,9 +44,12 @@ class ItemTests extends APITests {
 	
 	
 	public function testNewEmptyBookItem() {
-		$json = API::createItem("book", false, $this, 'jsonData');
+		$json = API::createItem("book", false, $this);
+		$json = $json['successful'][0]['data'];
 		$this->assertEquals("book", (string) $json['itemType']);
-		$this->assertTrue("" === $json['title']);
+		$this->assertSame("", $json['title']);
+		$this->assertSame("", $json['date']);
+		$this->assertSame("", $json['place']);
 		return $json;
 	}
 	
@@ -405,6 +408,24 @@ class ItemTests extends APITests {
 		$data = API::getItem($objectKey, $this, 'json')['data'];
 		// But the value shouldn't have actually changed
 		$this->assertEquals($originalDateAdded, $data['dateAdded']);
+		
+		// Allow if the there's a merge-tracking relation
+		$newDateAdded = "2019-04-13T01:48:54Z";
+		$data['dateAdded'] = $newDateAdded;
+		$data['relations'] = [
+			"dc:replaces" => [
+				"http://zotero.org/users/" . self::$config['userID'] . "/items/AAAAAAAA"
+			]
+		];
+		$response = API::userPut(
+			self::$config['userID'],
+			"$objectTypePlural/$objectKey",
+			json_encode($data)
+		);
+		$this->assert204($response);
+		$data = API::getItem($objectKey, $this, 'json')['data'];
+		// The value should have changed
+		$this->assertEquals($newDateAdded, $data['dateAdded']);
 	}
 	
 	
@@ -1037,6 +1058,26 @@ class ItemTests extends APITests {
 	}
 	
 	
+	// See note in validateJSONItem()
+	public function test_should_convert_child_attachment_to_top_level_and_add_to_collection_via_PATCH_without_parentItem_false() {
+		$collectionKey = API::createCollection('Test', false, $this, 'key');
+		$parentItemKey = API::createItem("book", false, $this, 'key');
+		$attachmentJSON = API::createAttachmentItem("linked_url", [], $parentItemKey, $this, 'jsonData');
+		unset($attachmentJSON['parentItem']);
+		$attachmentJSON['collections'] = [$collectionKey];
+		$response = API::userPatch(
+			self::$config['userID'],
+			"items/{$attachmentJSON['key']}",
+			json_encode($attachmentJSON)
+		);
+		$this->assert204($response);
+		$json = API::getItem($attachmentJSON['key'], $this, 'json')['data'];
+		$this->assertArrayNotHasKey('parentItem', $json);
+		$this->assertCount(1, $json['collections']);
+		$this->assertEquals($collectionKey, $json['collections'][0]);
+	}
+	
+	
 	public function testEditTitleWithCollectionInMultipleMode() {
 		$collectionKey = API::createCollection('Test', false, $this, 'key');
 		
@@ -1097,6 +1138,45 @@ class ItemTests extends APITests {
 		$this->assertCount(2, $json['tags']);
 		$this->assertContains($tag1, $json['tags']);
 		$this->assertContains($tag2, $json['tags']);
+	}
+	
+	
+	/**
+	 * If null is passed for a value, it should be treated the same as an empty string, not create
+	 * a NULL in the database.
+	 *
+	 * TODO: Since we don't have direct access to the database, our test for this is changing the
+	 * item type and then trying to retrieve it, which isn't ideal. Some way of checking the DB
+	 * state would be useful.
+	 */
+	public function test_should_treat_null_value_as_empty_string() {
+		$json = [
+			'itemType' => 'book',
+			'numPages' => null
+		];
+		$response = API::userPost(
+			self::$config['userID'],
+			"items",
+			json_encode([$json])
+		);
+		$this->assert200ForObject($response);
+		$json = API::getJSONFromResponse($response);
+		$key = $json['successful'][0]['key'];
+		$json = API::getItem($key, $this, 'json');
+		
+		// Change the item type to a type without the field
+		$json = [
+			'version' => $json['version'],
+			'itemType' => 'journalArticle'
+		];
+		API::userPatch(
+			self::$config['userID'],
+			"items/$key",
+			json_encode($json)
+		);
+		
+		$json = API::getItem($key, $this, 'json');
+		$this->assertArrayNotHasKey('numPages', $json);
 	}
 	
 	
@@ -1339,7 +1419,6 @@ class ItemTests extends APITests {
 	
 	/**
 	 * @group attachments
-	 * @group classic-sync
 	 */
 	public function testCreateLinkedFileAttachment() {
 		$key = API::createItem("book", false, $this, 'key');
@@ -1356,97 +1435,6 @@ class ItemTests extends APITests {
 		$this->assertArrayNotHasKey('filename', $json);
 		$this->assertArrayNotHasKey('md5', $json);
 		$this->assertArrayNotHasKey('mtime', $json);
-		
-		// Until classic sync is removed, paths should be stored as Mozilla-style relative descriptors,
-		// at which point they should be batch converted
-		require_once 'include/sync.inc.php';
-		require_once '../../include/Unicode.inc.php';
-		require_once '../../model/Attachments.inc.php';
-		$sessionID = \Sync::login();
-		$xml = \Sync::updated($sessionID, time() - 10);
-		$path2 = (string) array_get_first($xml->xpath('//items/item[@key="' . $json['key'] . '"]/path'));
-		$this->assertEquals(
-			$path,
-			"attachments:" . \Zotero_Attachments::decodeRelativeDescriptorString(substr($path2, 12))
-		);
-	}
-	
-	/**
-	 * @group attachments
-	 * @group classic-sync
-	 */
-	public function testLinkedFileAttachmentPathViaSync() {
-		require_once 'include/sync.inc.php';
-		require_once '../../include/Unicode.inc.php';
-		require_once '../../model/Attachments.inc.php';
-		require_once '../../model/ID.inc.php';
-		
-		$sessionID = \Sync::login();
-		$xml = \Sync::updated($sessionID, time());
-		
-		$updateKey = (string) $xml['updateKey'];
-		$itemKey = \Zotero_ID::getKey();
-		$filename = "tést.pdf";
-		
-		// Create item via sync
-		$data = '<data version="9"><items><item libraryID="'
-			. self::$config['libraryID'] . '" '
-			. 'key="' . $itemKey . '" '
-			. 'itemType="attachment" '
-			. 'dateAdded="2016-03-07 04:53:20" '
-			. 'dateModified="2016-03-07 04:54:09" '
-			. 'mimeType="application/pdf" '
-			. 'linkMode="2">'
-			// See note in testCreateLinkedFileAttachment
-			. '<path>attachments:' . \Zotero_Attachments::encodeRelativeDescriptorString($filename) . '</path>'
-			. '</item></items></data>';
-		$response = \Sync::upload($sessionID, $updateKey, $data);
-		\Sync::waitForUpload($sessionID, $response, $this);
-		\Sync::logout($sessionID);
-		
-		$json = API::getItem($itemKey, $this, 'json');
-		$this->assertEquals('linked_file', $json['data']['linkMode']);
-		// Linked file should have path
-		$this->assertEquals("attachments:" . $filename, $json['data']['path']);
-	}
-	
-	/**
-	 * @group attachments
-	 * @group classic-sync
-	 */
-	public function testStoredFileAttachmentPathViaSync() {
-		require_once 'include/sync.inc.php';
-		require_once '../../include/Unicode.inc.php';
-		require_once '../../model/Attachments.inc.php';
-		require_once '../../model/ID.inc.php';
-		
-		$sessionID = \Sync::login();
-		$xml = \Sync::updated($sessionID, time());
-		
-		$updateKey = (string) $xml['updateKey'];
-		$itemKey = \Zotero_ID::getKey();
-		$filename = "tést.pdf";
-		
-		// Create item via sync
-		$data = '<data version="9"><items><item libraryID="'
-			. self::$config['libraryID'] . '" '
-			. 'key="' . $itemKey . '" '
-			. 'itemType="attachment" '
-			. 'dateAdded="2016-03-07 04:53:20" '
-			. 'dateModified="2016-03-07 04:54:09" '
-			. 'mimeType="application/pdf" '
-			. 'linkMode="0">'
-			// See note in testCreateLinkedFileAttachment
-			. '<path>storage:' . \Zotero_Attachments::encodeRelativeDescriptorString($filename) . '</path>'
-			. '</item></items></data>';
-		$response = \Sync::upload($sessionID, $updateKey, $data);
-		\Sync::waitForUpload($sessionID, $response, $this);
-		\Sync::logout($sessionID);
-		
-		$json = API::getItem($itemKey, $this, 'json');
-		$this->assertEquals('imported_file', $json['data']['linkMode']);
-		// Linked file should have path
-		$this->assertEquals($filename, $json['data']['filename']);
 	}
 	
 	/**
@@ -1652,12 +1640,17 @@ class ItemTests extends APITests {
 	}
 	
 	
-	public function testCannotChangeStoragePropertiesInGroupLibraries() {
-		$key = API::groupCreateItem(
-			self::$config['ownedPrivateGroupID'], "book", [], $this, 'key'
-		);
-		$json = API::groupCreateAttachmentItem(
-			self::$config['ownedPrivateGroupID'], "imported_url", [], $key, $this, 'jsonData'
+	public function test_cannot_change_existing_storage_properties_to_null() {
+		$key = API::createItem("book", [], $this, 'key');
+		$json = API::createAttachmentItem(
+			"imported_url",
+			[
+				'md5' => md5(\Zotero_Utilities::randomString(50)),
+				'mtime' => time()
+			],
+			$key,
+			$this,
+			'jsonData'
 		);
 		
 		$key = $json['key'];
@@ -1666,18 +1659,18 @@ class ItemTests extends APITests {
 		$props = ["md5", "mtime"];
 		foreach ($props as $prop) {
 			$json2 = $json;
-			$json2[$prop] = "new" . ucwords($prop);
-			$response = API::groupPut(
-				self::$config['ownedPrivateGroupID'],
+			$json2[$prop] = null;
+			$response = API::userPut(
+				self::$config['userID'],
 				"items/$key",
 				json_encode($json2),
-				array(
+				[
 					"Content-Type: application/json",
 					"If-Unmodified-Since-Version: $version"
-				)
+				]
 			);
 			$this->assert400($response);
-			$this->assertEquals("Cannot change '$prop' directly in group library", $response->getBody());
+			$this->assertEquals("Cannot change existing '$prop' to null", $response->getBody());
 		}
 	}
 	
@@ -2046,7 +2039,7 @@ class ItemTests extends APITests {
 		$this->assert200($response);
 		$this->assertNumResults(1, $response);
 		$json = API::getJSONFromResponse($response);
-		$this->assertContains($parentKeys[0], $json[0]['key']);
+		$this->assertEquals($parentKeys[0], $json[0]['key']);
 		
 		// /top, Atom, in collection, with q for all items
 		$response = API::userGet(
@@ -2068,7 +2061,7 @@ class ItemTests extends APITests {
 		$this->assert200($response);
 		$this->assertNumResults(1, $response);
 		$json = API::getJSONFromResponse($response);
-		$this->assertContains($parentKeys[0], $json[0]['key']);
+		$this->assertEquals($parentKeys[0], $json[0]['key']);
 		
 		// /top, Atom, with q for child item
 		$response = API::userGet(
@@ -2088,13 +2081,9 @@ class ItemTests extends APITests {
 			"collections/$collectionKey/items/top?q=$childTitleSearch"
 		);
 		$this->assert200($response);
-		$this->assertNumResults(0, $response);
-		// Not currently possible
-		/*$this->assertNumResults(1, $response);
-		$xml = API::getXMLFromResponse($response);
-		$xpath = $xml->xpath('//atom:entry/zapi:key');
-		$this->assertCount(1, $xpath);
-		$this->assertContains($parentKeys[0], $xpath);*/
+		$this->assertNumResults(1, $response);
+		$json = API::getJSONFromResponse($response);
+		$this->assertEquals($parentKeys[0], $json[0]['key']);
 		
 		// /top, Atom, in collection, with q for child item
 		$response = API::userGet(
@@ -2102,13 +2091,11 @@ class ItemTests extends APITests {
 			"collections/$collectionKey/items/top?content=json&q=$childTitleSearch"
 		);
 		$this->assert200($response);
-		$this->assertNumResults(0, $response);
-		// Not currently possible
-		/*$this->assertNumResults(1, $response);
+		$this->assertNumResults(1, $response);
 		$xml = API::getXMLFromResponse($response);
 		$xpath = $xml->xpath('//atom:entry/zapi:key');
 		$this->assertCount(1, $xpath);
-		$this->assertContains($parentKeys[0], $xpath);*/
+		$this->assertContains($parentKeys[0], $xpath);
 		
 		// /top, JSON, with q for all items, ordered by title
 		$response = API::userGet(
@@ -2358,6 +2345,63 @@ class ItemTests extends APITests {
 	}
 	
 	
+	public function test_patch_of_item_should_set_trash_state() {
+		$json = API::createItem("book", [], $this, 'json');
+		
+		$data = [
+			[
+				'key' => $json['key'],
+				'version' => $json['version'],
+				'deleted' => true
+			]
+		];
+		$response = API::postItems($data);
+		$json = API::getJSONFromResponse($response);
+		
+		$this->assertArrayHasKey('deleted', $json['successful'][0]['data']);
+		$this->assertEquals(1, $json['successful'][0]['data']['deleted']);
+	}
+	
+	
+	public function test_patch_of_item_should_clear_trash_state() {
+		$json = API::createItem("book", [
+			"deleted" => true
+		], $this, 'json');
+		
+		$data = [
+			[
+				'key' => $json['key'],
+				'version' => $json['version'],
+				'deleted' => false
+			]
+		];
+		$response = API::postItems($data);
+		$json = API::getJSONFromResponse($response);
+		
+		$this->assertArrayNotHasKey('deleted', $json['successful'][0]['data']);
+	}
+	
+	
+	public function test_patch_of_item_in_trash_without_deleted_should_not_remove_it_from_trash() {
+		$json = API::createItem("book", [
+			"deleted" => true
+		], $this, 'json');
+		
+		$data = [
+			[
+				'key' => $json['key'],
+				'version' => $json['version'],
+				'title' => 'A'
+			]
+		];
+		$response = API::postItems($data);
+		$json = API::getJSONFromResponse($response);
+		
+		$this->assertArrayHasKey('deleted', $json['successful'][0]['data']);
+		$this->assertEquals(1, $json['successful'][0]['data']['deleted']);
+	}
+	
+	
 	public function testParentItem() {
 		$json = API::createItem("book", false, $this, 'jsonData');
 		$parentKey = $json['key'];
@@ -2503,6 +2547,22 @@ class ItemTests extends APITests {
 	}
 	
 	
+	public function test_should_return_409_if_a_note_references_a_note_as_a_parent_item() {
+		$parentKey = API::createNoteItem("<p>Parent</p>", null, $this, 'key');
+		$json = API::createNoteItem("<p>Parent</p>", $parentKey, $this);
+		$this->assert409ForObject($json, "Parent item cannot be a note or attachment");
+		$this->assertEquals($parentKey, $json['failed'][0]['data']['parentItem']);
+	}
+	
+	
+	public function test_should_return_409_if_an_attachment_references_a_note_as_a_parent_item() {
+		$parentKey = API::createNoteItem("<p>Parent</p>", null, $this, 'key');
+		$json = API::createAttachmentItem("imported_file", [], $parentKey, $this, 'responseJSON');
+		$this->assert409ForObject($json, "Parent item cannot be a note or attachment");
+		$this->assertEquals($parentKey, $json['failed'][0]['data']['parentItem']);
+	}
+	
+	
 	public function test_should_allow_emoji_in_title() {
 		$title = "🐶"; // 4-byte character
 		
@@ -2513,27 +2573,27 @@ class ItemTests extends APITests {
 			self::$config['userID'],
 			"items/$key"
 		);
-		$this->assertContains("\"title\": \"$title\"", $response->getBody());
+		$this->assertStringContainsString("\"title\": \"$title\"", $response->getBody());
 		
 		// Test feed (JSON)
 		$response = API::userGet(
 			self::$config['userID'],
 			"items"
 		);
-		$this->assertContains("\"title\": \"$title\"", $response->getBody());
+		$this->assertStringContainsString("\"title\": \"$title\"", $response->getBody());
 		
 		// Test entry (Atom)
 		$response = API::userGet(
 			self::$config['userID'],
 			"items/$key?content=json"
 		);
-		$this->assertContains("\"title\": \"$title\"", $response->getBody());
+		$this->assertStringContainsString("\"title\": \"$title\"", $response->getBody());
 		
 		// Test feed (Atom)
 		$response = API::userGet(
 			self::$config['userID'],
 			"items?content=json"
 		);
-		$this->assertContains("\"title\": \"$title\"", $response->getBody());
+		$this->assertStringContainsString("\"title\": \"$title\"", $response->getBody());
 	}
 }

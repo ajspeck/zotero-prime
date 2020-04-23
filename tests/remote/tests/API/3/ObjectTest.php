@@ -30,12 +30,12 @@ require_once 'APITests.inc.php';
 require_once 'include/api3.inc.php';
 
 class ObjectTests extends APITests {
-	public function setUp() {
+	public function setUp(): void {
 		parent::setUp();
 		API::userClear(self::$config['userID']);
 	}
 	
-	public function tearDown() {
+	public function tearDown(): void {
 		API::userClear(self::$config['userID']);
 	}
 	
@@ -158,6 +158,12 @@ class ObjectTests extends APITests {
 		$tempLibraryVersion = $func('item', $tempLibraryVersion);
 		$libraryVersion3 = $func('search', $tempLibraryVersion);
 		
+		// /deleted without 'since' should be an error
+		$response = API::userGet(
+			self::$config['userID'],
+			"deleted?key=" . self::$config['apiKey']
+		);
+		$this->assert400($response);
 		
 		// Request all deleted objects
 		$response = API::userGet(
@@ -171,14 +177,34 @@ class ObjectTests extends APITests {
 		$this->assertContentType("application/json", $response);
 		
 		// Make sure 'newer' is equivalent
-		$responseNewer = API::userGet(
+		$responseAlt = API::userGet(
 			self::$config['userID'],
 			"deleted?key=" . self::$config['apiKey'] . "&newer=$libraryVersion1"
 		);
-		$this->assertEquals($response->getStatus(), $responseNewer->getStatus());
-		$this->assertEquals($response->getBody(), $responseNewer->getBody());
-		$this->assertEquals($response->getHeader('Last-Modified-Version'), $responseNewer->getHeader('Last-Modified-Version'));
-		$this->assertEquals($response->getHeader('Content-Type'), $responseNewer->getHeader('Content-Type'));
+		$this->assert200($responseAlt);
+		$this->assertEquals($response->getBody(), $responseAlt->getBody());
+		$this->assertEquals($response->getHeader('Last-Modified-Version'), $responseAlt->getHeader('Last-Modified-Version'));
+		$this->assertEquals($response->getHeader('Content-Type'), $responseAlt->getHeader('Content-Type'));
+		
+		// Make sure 'since=0' is equivalent
+		$responseAlt = API::userGet(
+			self::$config['userID'],
+			"deleted?key=" . self::$config['apiKey'] . "&since=0"
+		);
+		$this->assert200($responseAlt);
+		$this->assertEquals($response->getBody(), $responseAlt->getBody());
+		$this->assertEquals($response->getHeader('Last-Modified-Version'), $responseAlt->getHeader('Last-Modified-Version'));
+		$this->assertEquals($response->getHeader('Content-Type'), $responseAlt->getHeader('Content-Type'));
+		
+		// Make sure 'newer=0' is equivalent
+		$responseAlt = API::userGet(
+			self::$config['userID'],
+			"deleted?key=" . self::$config['apiKey'] . "&newer=0"
+		);
+		$this->assert200($responseAlt);
+		$this->assertEquals($response->getBody(), $responseAlt->getBody());
+		$this->assertEquals($response->getHeader('Last-Modified-Version'), $responseAlt->getHeader('Last-Modified-Version'));
+		$this->assertEquals($response->getHeader('Content-Type'), $responseAlt->getHeader('Content-Type'));
 		
 		// Verify keys
 		$func = function ($json, $objectType, $objectKeys) use ($self) {
@@ -199,13 +225,23 @@ class ObjectTests extends APITests {
 		// Request second and third deleted objects
 		$response = API::userGet(
 			self::$config['userID'],
-			"deleted?key=" . self::$config['apiKey'] . "&newer=$libraryVersion2"
+			"deleted?key=" . self::$config['apiKey'] . "&since=$libraryVersion2"
 		);
 		$this->assert200($response);
 		$json = json_decode($response->getBody(), true);
 		$version = $response->getHeader("Last-Modified-Version");
 		$this->assertNotNull($version);
 		$this->assertContentType("application/json", $response);
+		
+		// Make sure 'newer' is equivalent
+		$responseAlt = API::userGet(
+			self::$config['userID'],
+			"deleted?key=" . self::$config['apiKey'] . "&newer=$libraryVersion2"
+		);
+		$this->assert200($responseAlt);
+		$this->assertEquals($response->getBody(), $responseAlt->getBody());
+		$this->assertEquals($response->getHeader('Last-Modified-Version'), $responseAlt->getHeader('Last-Modified-Version'));
+		$this->assertEquals($response->getHeader('Content-Type'), $responseAlt->getHeader('Content-Type'));
 		
 		// Verify keys
 		$func = function ($json, $objectType, $objectKeys) use ($self) {
@@ -260,7 +296,7 @@ class ObjectTests extends APITests {
 		);
 		$this->assert200($response);
 		$json = json_decode($response->getBody());
-		$this->assertInternalType('object', $json);
+		$this->assertIsObject($json);
 		$this->assertCount(0, get_object_vars($json));
 	}
 	
